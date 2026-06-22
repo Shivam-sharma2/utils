@@ -28,7 +28,7 @@ var setDefaults = function (sequenceName, defaultValue) {
         next: defaultValue
     }).then(() => { }, () => { });
 };
-var getCount = function (sequenceName, expire, callback) {
+var getCount = async function (sequenceName, expire) {
     var options = {};
     if (!expire) {
         expire = date;
@@ -36,14 +36,14 @@ var getCount = function (sequenceName, expire, callback) {
     options.new = true;
     options.upsert = true;
     options.setDefaultsOnInsert = true;
-    counterModel.findByIdAndUpdate(sequenceName, {
+    return await counterModel.findByIdAndUpdate(sequenceName, {
         $inc: {
             next: 1
         },
         $set: {
             expiresAt: expire
         }
-    }, options, callback);
+    }, options);
 };
 
 function getIdGenerator(prefix, counterName, suffix, padding, counter) {
@@ -53,7 +53,6 @@ function getIdGenerator(prefix, counterName, suffix, padding, counter) {
     }
     return function (next) {
         var self = this;
-        var mid = null;
         prefix = prefix ? prefix : "";
         suffix = suffix ? suffix : "";
         if (!self._id) {
@@ -64,7 +63,7 @@ function getIdGenerator(prefix, counterName, suffix, padding, counter) {
                 })
                 .catch(err => {
                     next(err);
-                })
+                });
         } else {
             next();
         }
@@ -77,10 +76,7 @@ function generateId(prefix, counterName, suffix, padding, counter) {
     let id = null;
     return new Promise((resolve, reject) => {
         if (counter || counter === 0) {
-            getCount(counterName, null, function (err, doc) {
-                if (err) {
-                    return reject(err);
-                }
+            getCount(counterName, null).then(doc => {
                 let nextNo = padding ? Math.pow(10, padding) + doc.next : doc.next;
                 nextNo = nextNo.toString();
                 if (padding && parseInt(nextNo.substr(0, 1)) > 1) {
@@ -88,25 +84,24 @@ function generateId(prefix, counterName, suffix, padding, counter) {
                 }
                 id = padding ? prefix + nextNo.substr(1) + suffix : prefix + nextNo + suffix;
                 return resolve(id);
-            });
+            }).catch(err => reject(err));
         } else if (padding) {
             id = prefix + rand(padding) + suffix;
-            resolve(id)
+            resolve(id);
         } else {
-            getCount(counterName, null, function (err, doc) {
-                if (err) return reject(err);
-                id = prefix + doc.next
+            getCount(counterName, null).then(doc => {
+                id = prefix + doc.next;
                 resolve(id);
-            });
+            }).catch(err => reject(err));
         }
-    })
+    });
 }
 
 function rand(_i) {
     var i = Math.pow(10, _i - 1);
     var j = Math.pow(10, _i) - 1;
     return ((Math.floor(Math.random() * (j - i + 1)) + i));
-};
+}
 
 function transactionIdGenerator() {
     return function (next) {
@@ -114,13 +109,13 @@ function transactionIdGenerator() {
         var date = new Date();
         date.setDate(date.getDate() + 1);
         if (!self._id) {
-            getCount("universalTransactionId" + date.getDate(), date, function (err, doc) {
+            getCount("universalTransactionId" + date.getDate(), date).then(doc => {
                 var count = 1000000;
                 count += doc.next;
                 date.setDate(date.getDate() - 1);
                 self._id = count.toString() + date.getTime();
                 next();
-            });
+            }).catch(err => next(err));
         } else {
             next();
         }
@@ -133,13 +128,13 @@ function transactionIdGeneratorParallel() {
         var date = new Date();
         date.setDate(date.getDate() + 1);
         if (!self._id) {
-            getCount("universalTransactionId" + date.getDate(), date, function (err, doc) {
+            getCount("universalTransactionId" + date.getDate(), date).then(doc => {
                 var count = 1000000;
                 count += doc.next;
                 date.setDate(date.getDate() - 1);
                 self._id = count.toString() + date.getTime();
                 done();
-            });
+            }).catch(err => done(err));
         } else {
             done();
         }
@@ -152,4 +147,3 @@ module.exports.getIdGenerator = getIdGenerator;
 module.exports.generateId = generateId;
 module.exports.getCount = getCount;
 module.exports.setDefaults = setDefaults;
-
