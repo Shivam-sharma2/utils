@@ -1,5 +1,5 @@
 var mongoose = require("mongoose");
-var date = process.env.EXPIRE ? process.env.EXPIRE : new Date("3000-12-31");
+var date = process.env.EXPIRE ? new Date(process.env.EXPIRE) : new Date("3000-12-31");
 
 // Counter reads/writes go through the raw native driver (via Mongoose's own
 // already-connected MongoClient) instead of a Mongoose Model. Mongoose 8.x's
@@ -7,8 +7,25 @@ var date = process.env.EXPIRE ? process.env.EXPIRE : new Date("3000-12-31");
 // this deployment ("Operation counters.findOneAndUpdate() buffering timed
 // out"); the native driver has no such buffering step, so this sidesteps
 // the stall while still using the same live connection pool.
+var indexEnsured = false;
+function ensureIndexes(collection) {
+    if (indexEnsured) {
+        return;
+    }
+    indexEnsured = true;
+    // TTL index used to be created automatically by Mongoose's autoIndex
+    // behavior for the "counter" model. Fired once, best-effort, in the
+    // background so a slow/failed index build never blocks counter reads.
+    collection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }).catch(err => {
+        indexEnsured = false;
+        console.error("Error creating TTL index on counters collection:", err.message);
+    });
+}
+
 function getCounterCollection() {
-    return mongoose.connection.getClient().db(mongoose.connection.name).collection("counters");
+    var collection = mongoose.connection.getClient().db(mongoose.connection.name).collection("counters");
+    ensureIndexes(collection);
+    return collection;
 }
 
 var setDefaults = function (sequenceName, defaultValue) {
