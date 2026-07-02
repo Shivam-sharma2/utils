@@ -22,7 +22,22 @@ function ensureIndexes(collection) {
     });
 }
 
-function getCounterCollection() {
+// Mongoose Models transparently queue ("buffer") operations issued before
+// the connection is ready; the raw driver does not. Some callers (e.g.
+// schema pre-save hooks wired up at module-load time) invoke the counter
+// before mongoose.connect() has resolved, so wait for the "connected"
+// event here instead of assuming the client already exists.
+function waitForConnection() {
+    if (mongoose.connection.readyState === 1 && mongoose.connection.getClient()) {
+        return Promise.resolve();
+    }
+    return new Promise(resolve => {
+        mongoose.connection.once("connected", resolve);
+    });
+}
+
+async function getCounterCollection() {
+    await waitForConnection();
     var collection = mongoose.connection.getClient().db(mongoose.connection.name).collection("counters");
     ensureIndexes(collection);
     return collection;
@@ -33,17 +48,18 @@ var setDefaults = function (sequenceName, defaultValue) {
         return;
     }
     defaultValue = defaultValue ? defaultValue - 1 : 0;
-    getCounterCollection().insertOne({
+    getCounterCollection().then(collection => collection.insertOne({
         _id: sequenceName,
         next: defaultValue,
         expiresAt: date
-    }).then(() => { }, () => { });
+    })).then(() => { }, () => { });
 };
 var getCount = async function (sequenceName, expire) {
     if (!expire) {
         expire = date;
     }
-    var doc = await getCounterCollection().findOneAndUpdate({
+    var collection = await getCounterCollection();
+    var doc = await collection.findOneAndUpdate({
         _id: sequenceName
     }, {
         $inc: {
