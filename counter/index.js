@@ -59,6 +59,9 @@ var getCount = async function (sequenceName, expire) {
         expire = date;
     }
     var collection = await getCounterCollection();
+    // includeResultMetadata is set explicitly so the return shape (raw
+    // document vs. {value: document}) doesn't depend on driver-version
+    // defaults; a wrong guess here previously produced NaN counter values.
     var doc = await collection.findOneAndUpdate({
         _id: sequenceName
     }, {
@@ -70,9 +73,13 @@ var getCount = async function (sequenceName, expire) {
         }
     }, {
         returnDocument: "after",
-        upsert: true
+        upsert: true,
+        includeResultMetadata: false
     });
-    return doc.value || doc;
+    if (!doc || typeof doc.next !== "number") {
+        throw new Error("Counter document for " + sequenceName + " did not return a valid 'next' value");
+    }
+    return doc;
 };
 
 function getIdGenerator(prefix, counterName, suffix, padding, counter) {
