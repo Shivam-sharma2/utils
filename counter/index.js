@@ -1,49 +1,45 @@
 var mongoose = require("mongoose");
 var date = process.env.EXPIRE ? process.env.EXPIRE : new Date("3000-12-31");
-var counterSchema = new mongoose.Schema({
-    _id: {
-        type: String
-    },
-    next: {
-        type: Number
-    },
-    expiresAt: {
-        type: Date,
-        default: date
-    }
-});
-counterSchema.index({
-    expiresAt: 1
-}, {
-        expireAfterSeconds: 0
-    });
-var counterModel = mongoose.model("counter", counterSchema);
+
+// Counter reads/writes go through the raw native driver (via Mongoose's own
+// already-connected MongoClient) instead of a Mongoose Model. Mongoose 8.x's
+// Model/Query layer buffers operations and can stall indefinitely against
+// this deployment ("Operation counters.findOneAndUpdate() buffering timed
+// out"); the native driver has no such buffering step, so this sidesteps
+// the stall while still using the same live connection pool.
+function getCounterCollection() {
+    return mongoose.connection.getClient().db(mongoose.connection.name).collection("counters");
+}
+
 var setDefaults = function (sequenceName, defaultValue) {
     if (!sequenceName) {
         return;
     }
     defaultValue = defaultValue ? defaultValue - 1 : 0;
-    counterModel.create({
+    getCounterCollection().insertOne({
         _id: sequenceName,
-        next: defaultValue
+        next: defaultValue,
+        expiresAt: date
     }).then(() => { }, () => { });
 };
 var getCount = async function (sequenceName, expire) {
-    var options = {};
     if (!expire) {
         expire = date;
     }
-    options.new = true;
-    options.upsert = true;
-    options.setDefaultsOnInsert = true;
-    return await counterModel.findByIdAndUpdate(sequenceName, {
+    var doc = await getCounterCollection().findOneAndUpdate({
+        _id: sequenceName
+    }, {
         $inc: {
             next: 1
         },
         $set: {
             expiresAt: expire
         }
-    }, options);
+    }, {
+        returnDocument: "after",
+        upsert: true
+    });
+    return doc.value || doc;
 };
 
 function getIdGenerator(prefix, counterName, suffix, padding, counter) {
